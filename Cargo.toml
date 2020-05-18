@@ -1,0 +1,15 @@
+[package]
+name = "toil"
+version = "0.1.0"
+authors = ["Geordon Worley <vadixidav@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+emu_core = { version = "0.1.1", features = ["glsl-compile"] }
+futures = "0.3"
+zerocopy = "0.2.0"
+emu_glsl = "0.1.0"
+tokio = "0.2.21"
+
+[dev-dependencies]
+tokio = { version = "0.2.21", features = ["full"] }
