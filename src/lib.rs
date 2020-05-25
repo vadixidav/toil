@@ -5,17 +5,41 @@ use emu_core::prelude::*;
 use zerocopy::*;
 use std::mem::size_of;
 use duplicate::duplicate;
+use std::ops::AddAssign;
 
 pub struct Environment {}
 
 pub struct Array<T, const N: usize> {
-    pub strides: [isize; N],
-    pub dims: [usize; N],
+    strides: [isize; N],
+    dims: [usize; N],
     data: DeviceBox<[T]>,
 }
 
 fn next_64_multiple(n: usize) -> usize {
     (n + 63) / 64 * 64
+}
+
+impl<T: AsBytes + FromBytes + Default + Copy> Array<T, 1> {
+    pub fn try_new_1d(mut data: Vec<T>) -> Result<Self, NoDeviceError> {
+        // Strides are always by 1.
+        let strides = [1];
+        let dims = [data.len()];
+        // The buffer must be a multple of 64, so resize everything appropriately.
+        let len = data.len();
+        let buffer_len = next_64_multiple(len);
+        data.resize_with(buffer_len, Default::default);
+        // Copy the now-resized data to the GPU.
+        let data = data.as_device_boxed_mut()?;
+        Ok(Self {
+            strides,
+            dims,
+            data,
+        })
+    }
+
+    pub fn new_1d(data: Vec<T>) -> Self {
+        Self::try_new_1d(data).expect("tried to create toil Array with no device")
+    }
 }
 
 impl<T: AsBytes + FromBytes + Default + Copy, const N: usize> Array<T, N> {
@@ -42,6 +66,14 @@ impl<T: AsBytes + FromBytes + Default + Copy, const N: usize> Array<T, N> {
         Self::try_new(dims, data).expect("tried to create toil Array with no device")
     }
 
+    pub fn strides(&self) -> &[isize; N] {
+        &self.strides
+    }
+
+    pub fn dims(&self) -> &[usize; N] {
+        &self.dims
+    }
+
     fn len(&self) -> usize {
         self.dims.iter().copied().product::<usize>()
     }
@@ -64,6 +96,7 @@ impl<T: AsBytes + FromBytes + Default + Copy, const N: usize> Array<T, N> {
         Ok(data)
     }
 }
+
 #[duplicate(
     RustType glsl_type;
     [u32] ["uint"];
@@ -93,6 +126,34 @@ impl<const N: usize> Clone for Array<RustType, N> {
             strides: self.strides,
             dims: self.dims,
             data,
+        }
+    }
+}
+
+#[duplicate(
+    RustType glsl_type;
+    [u32] ["uint"];
+    [i32] ["int"];
+    [f32] ["float"];
+)]
+impl<const N: usize> AddAssign for Array<RustType, N> {
+    fn add_assign(&mut self, rhs: Self) {
+        assert_eq!(&self.dims[..], &rhs.dims[..]);
+        let c = compile::<GlslKernel, GlslKernelCompile, Vec<u32>, GlobalCache>(
+            GlslKernel::new()
+                .spawn(64)
+                .param_mut::<[RustType], _>(format!("{}[] source", glsl_type))
+                .param_mut::<[RustType], _>(format!("{}[] dest", glsl_type))
+                .with_kernel_code(
+                    r#"
+                        uint id = gl_GlobalInvocationID.x;
+                        dest[id] += source[id];
+                    "#,
+                ),
+        ).expect("failed to compile copy kernel")
+        .finish().expect("failed to finish copy kernel");
+        unsafe {
+            spawn(self.batches() as u32).launch(call!(c, &rhs.data, &mut self.data)).expect("failed to copy data in toil::Array::clone");
         }
     }
 }
