@@ -64,18 +64,18 @@ impl<T: AsBytes + FromBytes + Default + Copy, const N: usize> Array<T, N> {
     }
 }
 #[duplicate(
-    RustType glsl_type;
-    [u32] ["uint"];
-    [i32] ["int"];
-    [f32] ["float"];
+    RustType glsl_type zero_value;
+    [u32] ["uint"] [0];
+    [i32] ["int"] [0];
+    [f32] ["float"] [0.0];
 )]
 impl<const N: usize> Clone for Array<RustType, N> {
     fn clone(&self) -> Self {
-        let mut data: DeviceBox<[RustType]> = DeviceBox::with_size_mut(self.buffer_len() * size_of::<RustType>()).expect("tried to clone toil Array with no device");
+        let mut data: DeviceBox<[RustType]> = vec![zero_value; self.buffer_len()].as_device_boxed_mut().expect("tried to clone toil Array with no device");
         let c = compile::<GlslKernel, GlslKernelCompile, Vec<u32>, GlobalCache>(
             GlslKernel::new()
                 .spawn(64)
-                .param::<[RustType], _>(format!("{}[] source", glsl_type))
+                .param_mut::<[RustType], _>(format!("{}[] source", glsl_type))
                 .param_mut::<[RustType], _>(format!("{}[] dest", glsl_type))
                 .with_kernel_code(
                     r#"
